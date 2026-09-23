@@ -70,29 +70,33 @@ def run_download(job_id: str, url: str, audio_only: bool, quality: str):
             "preferredquality": "192",
         }]
     else:
-        # Prefer H.264 video + AAC/M4A audio first — this is the combo iOS's
-        # Photos/Files viewer always plays natively. VP9/WebM (common on
-        # Instagram/YouTube) often shows a blank or unplayable file on iPhone,
-        # so it's only used as a last-resort fallback here.
+        # Instagram/some platforms only offer VP9 video, which iOS's Photos/
+        # Files viewer often can't play (shows blank/black screen). Rather
+        # than hoping a compatible format exists, we always re-encode to
+        # H.264 video + AAC audio explicitly via ffmpeg, so the output is
+        # guaranteed to play on iOS no matter what codec the source used.
         if quality == "best":
-            opts["format"] = (
-                "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
-                "best[vcodec^=avc1]/"
-                "bestvideo+bestaudio/best"
-            )
+            opts["format"] = "bestvideo+bestaudio/best"
         else:
-            opts["format"] = (
-                f"bestvideo[vcodec^=avc1][height<={quality}]+bestaudio[acodec^=mp4a]/"
-                f"best[vcodec^=avc1][height<={quality}]/"
-                f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]"
-            )
+            opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]"
+
         opts["merge_output_format"] = "mp4"
-        # Re-encode to H.264/AAC if yt-dlp still had to fall back to VP9/Opus,
-        # so the saved file always plays on iOS regardless of source format.
         opts["postprocessors"] = opts.get("postprocessors", []) + [{
             "key": "FFmpegVideoConvertor",
             "preferedformat": "mp4",
         }]
+        # These args force the actual re-encode (not just a container remux),
+        # so VP9/Opus sources always come out as iOS-compatible H.264/AAC.
+        opts["postprocessor_args"] = {
+            "VideoConvertor": [
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "23",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-movflags", "+faststart",
+            ]
+        }
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
