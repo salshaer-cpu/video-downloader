@@ -97,7 +97,7 @@ def run_download(job_id: str, url: str, audio_only: bool, quality: str):
                 result = subprocess.run(
                     [
                         "ffmpeg", "-y", "-i", merged_path,
-                        "-vf", "scale='min(480,iw)':'min(854,ih)':force_original_aspect_ratio=decrease",
+                        "-vf", "scale='if(gt(iw,480),480,iw)':-2",
                         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
                         "-threads", "1",
                         "-c:a", "aac", "-b:a", "96k",
