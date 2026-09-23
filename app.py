@@ -97,12 +97,15 @@ def run_download(job_id: str, url: str, audio_only: bool, quality: str):
                 result = subprocess.run(
                     [
                         "ffmpeg", "-y", "-i", merged_path,
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-c:a", "aac", "-b:a", "128k",
+                        "-vf", "scale='min(720,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+                        "-threads", "1",
+                        "-c:a", "aac", "-b:a", "96k",
                         "-movflags", "+faststart",
                         converted_path,
                     ],
                     capture_output=True, text=True,
+                    timeout=600,
                 )
                 if result.returncode != 0:
                     raise RuntimeError(f"ffmpeg conversion failed: {result.stderr[-500:]}")
