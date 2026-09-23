@@ -19,6 +19,7 @@ platform Terms of Service and copyright law depending on your use case.
 
 import os
 import re
+import subprocess
 import threading
 import uuid
 from pathlib import Path
@@ -70,33 +71,11 @@ def run_download(job_id: str, url: str, audio_only: bool, quality: str):
             "preferredquality": "192",
         }]
     else:
-        # Instagram/some platforms only offer VP9 video, which iOS's Photos/
-        # Files viewer often can't play (shows blank/black screen). Rather
-        # than hoping a compatible format exists, we always re-encode to
-        # H.264 video + AAC audio explicitly via ffmpeg, so the output is
-        # guaranteed to play on iOS no matter what codec the source used.
         if quality == "best":
             opts["format"] = "bestvideo+bestaudio/best"
         else:
             opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]"
-
         opts["merge_output_format"] = "mp4"
-        opts["postprocessors"] = opts.get("postprocessors", []) + [{
-            "key": "FFmpegVideoConvertor",
-            "preferedformat": "mp4",
-        }]
-        # These args force the actual re-encode (not just a container remux),
-        # so VP9/Opus sources always come out as iOS-compatible H.264/AAC.
-        opts["postprocessor_args"] = {
-            "VideoConvertor": [
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "23",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-movflags", "+faststart",
-            ]
-        }
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -104,6 +83,33 @@ def run_download(job_id: str, url: str, audio_only: bool, quality: str):
             final_path = ydl.prepare_filename(info)
             if audio_only:
                 final_path = str(Path(final_path).with_suffix(".mp3"))
+            else:
+                # Force a real re-encode to H.264/AAC ourselves. yt-dlp's own
+                # postprocessor only remuxes and skips this step whenever the
+                # container is already .mp4 — even if the video stream inside
+                # is VP9, which iOS cannot play. Running ffmpeg directly here
+                # guarantees the codec is actually converted.
+                job["progress"] = "converting for iOS compatibility"
+                merged_path = str(Path(final_path).with_suffix(".mp4"))
+                converted_path = str(Path(merged_path).with_name(
+                    Path(merged_path).stem + "_ios.mp4"
+                ))
+                result = subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-i", merged_path,
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                        "-c:a", "aac", "-b:a", "128k",
+                        "-movflags", "+faststart",
+                        converted_path,
+                    ],
+                    capture_output=True, text=True,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"ffmpeg conversion failed: {result.stderr[-500:]}")
+                os.remove(merged_path)
+                os.rename(converted_path, merged_path)
+                final_path = merged_path
+
             filename = Path(final_path).name
             job["status"] = "done"
             job["filename"] = filename
